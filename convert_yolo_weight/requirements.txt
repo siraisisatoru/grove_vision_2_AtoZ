@@ -1,0 +1,38 @@
+# ============================================================
+# Versions pinned to match the WORKING Google Colab environment
+# (x86_64 / amd64, Python 3.11). Build with --platform linux/amd64.
+# ============================================================
+
+# --- Numerics ---
+numpy==2.0.2
+# NOTE: ml_dtypes is force-installed to 0.5.4 in the Dockerfile.
+
+# --- TensorFlow stack ---
+tensorflow==2.18.0
+tf-keras==2.18.0
+keras==3.8.0
+tensorboard==2.18.0
+
+# --- PyTorch (pinned to Colab's version, keeps classic ONNX export path) ---
+torch==2.6.0
+torchvision==0.21.0
+
+# --- ONNX conversion stack ---
+onnx==1.17.0
+onnx-graphsurgeon==0.6.1
+onnx2tf==1.22.3
+onnxruntime==1.26.0
+onnxslim==0.1.94
+sng4onnx==2.0.1
+
+# --- TFLite metadata ---
+tflite-support==0.4.4
+
+# --- Ethos-U Vela compiler (for Ethos-U55 NPU on Himax WE2) ---
+ethos-u-vela
+
+# --- YOLO helper ---
+ultralytics-thop==2.0.20
+
+# --- Vision (headless) ---
+opencv-python-headless==4.12.0.88

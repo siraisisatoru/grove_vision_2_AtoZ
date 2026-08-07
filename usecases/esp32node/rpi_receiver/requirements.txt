@@ -1,0 +1,6 @@
+# opencv-python-headless: no GUI/Qt/GTK deps (no libGL.so.1 requirement), which
+# is what a headless Pi needs -- --display (the local OpenCV window) won't work,
+# but --mjpeg-port and --save-dir don't need it. If you actually run this with
+# a display attached and want --display, swap this for plain opencv-python.
+opencv-python-headless>=4.8
+numpy>=1.24

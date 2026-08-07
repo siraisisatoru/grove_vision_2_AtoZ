@@ -1,0 +1,36 @@
+// Copy to config.h and fill in. config.h is gitignored.
+#pragma once
+
+// ---- WiFi -------------------------------------------------------------------
+#define WIFI_SSID     "your-ssid"
+#define WIFI_PASSWORD "your-password"
+#define WIFI_HOSTNAME "grove-esp-node"
+
+// ---- Raspberry Pi receiver --------------------------------------------------
+#define RPI_HOST "192.168.1.50"
+#define RPI_PORT 5010
+
+// ---- What to ask the Grove board for ----------------------------------------
+// AT+INVOKE=N_TIMES,RESULTS_ONLY
+//   1 -> boxes only, runs at full inference rate (~0.3 kB/frame). Works on
+//        unmodified firmware.
+//   0 -> boxes + base64 JPEG, link-limited to a few fps. Requires
+//        esp_node/firmware_patch/0001-*.patch on the Grove board, otherwise the
+//        UART1 TX path stalls after a handful of large frames.
+#define INVOKE_RESULTS_ONLY 0
+
+// Optional: AT+SENSOR=1,1,<idx> before invoking, to trade resolution for fps.
+// -1 keeps whatever preset the board booted with.
+#define SENSOR_PRESET_INDEX -1
+
+// ---- Sizing -----------------------------------------------------------------
+// Largest AT line we accept. A 640x480 JPEG base64s to ~47 kB plus envelope.
+// Three of these are allocated from PSRAM (double buffer + carry).
+#define FRAME_BUF_SIZE (96 * 1024)
+
+// ESP32 UART driver ring. Must exceed what arrives while the reader task is
+// descheduled. Internal DRAM, not PSRAM.
+#define UART_RX_RING_SIZE (32 * 1024)
+
+// Re-issue AT+INVOKE if this many ms pass with no event frame.
+#define INVOKE_WATCHDOG_MS 8000

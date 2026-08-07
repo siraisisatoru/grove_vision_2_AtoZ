@@ -1,0 +1,17 @@
+output
+datasets
+
+.venv
+.venv_train
+venv
+
+.env
+
+.DS_Store
+
+__pycache__
+
+# Remove yolo pretrain models
+yolo*.pt
+
+output.img

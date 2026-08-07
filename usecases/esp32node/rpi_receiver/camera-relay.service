@@ -1,0 +1,21 @@
+[Unit]
+Description=Grove Vision AI V2 camera relay (ESP32 TCP receiver + MJPEG server)
+# NetworkManager brings up the WiFi hotspot (§10.4); wait for it so the
+# receiver's listen socket comes up on an interface the ESP32 can reach.
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/camera_relay
+ExecStart=%h/camera_relay/venv/bin/python3 -u %h/camera_relay/receiver.py --mjpeg-port 8080
+Restart=on-failure
+RestartSec=2
+# Don't restart-loop forever if something is fundamentally broken (e.g. venv
+# missing) -- 5 crashes in 30s and systemd gives up, visible via `systemctl
+# --user status`.
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target

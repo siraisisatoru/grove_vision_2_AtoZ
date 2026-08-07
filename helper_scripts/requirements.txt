@@ -1,0 +1,11 @@
+pyserial>=3.5
+roboflow>=1.1.0
+xmodem>=0.4.6
+flask>=2.3.0
+flask-socketio>=5.3.6
+flask-cors>=4.0.0
+requests>=2.31.0
+eventlet>=0.33.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0

@@ -1,0 +1,9 @@
+# Training venv — Apple Silicon (arm64) + MPS
+# Install with: pip install -r requirements_train.txt
+#
+# This is intentionally separate from requirements.txt (device tools).
+# The kris-himax fork used for TFLite conversion lives in Docker only.
+
+torch
+torchvision
+ultralytics>=8.3.209   # 8.3.209+ is numpy-2.x-compatible on macOS
