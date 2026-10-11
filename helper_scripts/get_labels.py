@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
-"""Print comma-separated class names from a YOLO data.yaml.
+"""Print comma-separated class names from a YOLO data.yaml, or (with --classify)
+from an ImageFolder-layout classification dataset's train/ subdirectories.
 
 Usage: python get_labels.py <path/to/data.yaml>
+       python get_labels.py --classify <path/to/dataset_root>
 """
 import sys
 from pathlib import Path
+
+
+def classify_labels(dataset_root: Path) -> list[str]:
+    """Sorted class names from train/<class>/ subdirectories.
+
+    Must be sorted() — Ultralytics' classify dataloader assigns class indices
+    by sorted folder name, so this order must match exactly or downstream
+    label display (stream_view.py) will be off-by-index.
+    """
+    train_dir = dataset_root / "train"
+    if not train_dir.is_dir():
+        return []
+    return sorted(p.name for p in train_dir.iterdir() if p.is_dir())
 
 
 def parse_names(yaml_path: Path) -> list[str]:
@@ -34,8 +49,14 @@ def parse_names(yaml_path: Path) -> list[str]:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit("Usage: get_labels.py <data.yaml>")
-    names = parse_names(Path(sys.argv[1]))
+    argv = sys.argv[1:]
+    if argv and argv[0] == "--classify":
+        if len(argv) < 2:
+            sys.exit("Usage: get_labels.py --classify <dataset_root>")
+        names = classify_labels(Path(argv[1]))
+    else:
+        if len(argv) < 1:
+            sys.exit("Usage: get_labels.py <data.yaml>")
+        names = parse_names(Path(argv[0]))
     if names:
         print(",".join(names))

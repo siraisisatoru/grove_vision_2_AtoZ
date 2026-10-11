@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build datasets/hagrid_gestures/ — 5-class hand-gesture detection from HaGRID.
+"""Build datasets/detect/hagrid_gestures/ — 5-class hand-gesture detection from HaGRID.
 
 Run from the repo root, after get_dataset.sh has populated datasets/_hagrid_raw/:
 
-    custom_dataset_usecases/hagrid_gestures/get_dataset.sh
-    python3 custom_dataset_usecases/hagrid_gestures/build_dataset.py
+    custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh
+    python3 custom_dataset_usecases/detect/hagrid_gestures/build_dataset.py
 
 datasets/ is gitignored, so this script is the reproducible source of truth. It
-is idempotent: it rebuilds datasets/hagrid_gestures/ from scratch every run and
+is idempotent: it rebuilds datasets/detect/hagrid_gestures/ from scratch every run and
 never touches the raw cache.
 
 WHAT IT DOES
@@ -100,9 +100,9 @@ MIN_BOX_AREA = 0.0
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
-repo = Path(__file__).resolve().parents[2]
+repo = Path(__file__).resolve().parents[3]
 raw = repo / "datasets" / "_hagrid_raw"
-dst = repo / "datasets" / "hagrid_gestures"
+dst = repo / "datasets" / "detect" / "hagrid_gestures"
 
 CLASS_INDEX = {name: i for i, name in enumerate(GESTURES)}
 
@@ -133,7 +133,7 @@ def find_annotations() -> dict[str, dict]:
         raise SystemExit(
             f"No annotations found for: {', '.join(missing)}\n"
             f"Looked for <gesture>.json anywhere under {raw}\n"
-            f"Run custom_dataset_usecases/hagrid_gestures/get_dataset.sh first."
+            f"Run custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh first."
         )
 
     for g in GESTURES:

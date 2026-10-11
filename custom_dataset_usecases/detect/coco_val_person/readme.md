@@ -34,7 +34,7 @@ images still underfits; only the source path in `build_dataset.py` changes.
 downloads ~865 MB into `datasets/_coco_raw/` and caches it; later runs reuse it:
 
 ```bash
-python3 custom_dataset_usecases/coco_val_person/build_dataset.py
+python3 custom_dataset_usecases/detect/coco_val_person/build_dataset.py
 ```
 
 Expected output:
@@ -51,7 +51,7 @@ Plus the gitignored `.env` that `flow.sh` requires even with no Roboflow call:
 
 ```bash
 echo 'ROBOFLOW_API_KEY=unused_no_roboflow_project' \
-  > custom_dataset_usecases/coco_val_person/.env
+  > custom_dataset_usecases/detect/coco_val_person/.env
 ```
 
 Raw downloads (cached, safe to delete to reclaim ~865 MB):
@@ -108,29 +108,29 @@ project); training is the point, so no `--skip-train` on the first run.
 **Full run — train, convert, flash, stream:**
 
 ```bash
-./flow.sh --coco_val_person --yolo26 --skip-fetch
+./flow.sh --detect/coco_val_person --skip-fetch
 ```
 
 **Train and convert, no hardware needed:**
 
 ```bash
-./flow.sh --coco_val_person --yolo26 --skip-fetch --skip-flash
+./flow.sh --detect/coco_val_person --skip-fetch --skip-flash
 ```
 
 **Re-convert existing weights** (e.g. after changing `IMGSZ`):
 
 ```bash
-./flow.sh --coco_val_person --yolo26 --skip-fetch --skip-train
+./flow.sh --detect/coco_val_person --skip-fetch --skip-train
 ```
 
 **Flash + stream an already-converted model** (hold BOOT, press RESET when
 prompted):
 
 ```bash
-./flow.sh --coco_val_person --yolo26 --skip-fetch --skip-train --skip-convert
+./flow.sh --detect/coco_val_person --skip-fetch --skip-train --skip-convert
 ```
 
-Artifacts land in `datasets/coco_val_person/`: `runs/train/weights/best.pt`,
+Artifacts land in `datasets/detect/coco_val_person/`: `runs/train/weights/best.pt`,
 `runs/train/results.csv`, and `convert/yolo26_int8_vela.tflite`.
 
 ---

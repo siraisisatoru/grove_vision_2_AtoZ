@@ -8,6 +8,11 @@ Reads from environment (set by flow.sh via the use-case .env):
   LABELS        — comma-separated class names (used by synthetic mode)
   IMGSZ         — image size for synthetic generation (default 160)
   SMOKE         — set to 1 to use synthetic data instead of Roboflow
+  TASK          — 'detect' (default) or 'classify'. classify expects/produces an
+                   ImageFolder layout (train/<class>/*.jpg, ...) instead of YOLO
+                   bbox labels + data.yaml — see Roboflow's "folder" export format
+                   (ROBOFLOW_FORMAT=folder), which is what a Classification project
+                   downloads as.
 
 Usage (via flow.sh):
   flow.sh handles calling this script automatically.
@@ -67,7 +72,20 @@ def _parse_names_from_yaml(root: Path) -> list[str] | None:
     return names or None
 
 
-def download_roboflow(out_dir: Path) -> Path:
+def _classify_classes(root: Path) -> list[str]:
+    """Class names for an ImageFolder-layout classification dataset.
+
+    Sorted, because Ultralytics' classify dataloader assigns class indices by
+    sorted folder name — get_labels.py's --classify mode must match this order
+    exactly or downstream label display will be off-by-index.
+    """
+    train_dir = root / "train"
+    if not train_dir.is_dir():
+        return []
+    return sorted(p.name for p in train_dir.iterdir() if p.is_dir())
+
+
+def download_roboflow(out_dir: Path, task: str) -> Path:
     required = ["ROBOFLOW_API_KEY", "ROBOFLOW_WORKSPACE", "ROBOFLOW_PROJECT", "ROBOFLOW_VERSION"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
@@ -81,7 +99,8 @@ def download_roboflow(out_dir: Path) -> Path:
     project   = os.environ["ROBOFLOW_PROJECT"]
     version   = int(os.environ["ROBOFLOW_VERSION"])
 
-    fmt = os.environ.get("ROBOFLOW_FORMAT", "yolov8")
+    default_fmt = "folder" if task == "classify" else "yolov8"
+    fmt = os.environ.get("ROBOFLOW_FORMAT", default_fmt)
 
     from roboflow import Roboflow
     print(f"Connecting to Roboflow workspace={workspace} project={project} v{version} format={fmt}")
@@ -94,6 +113,20 @@ def download_roboflow(out_dir: Path) -> Path:
     )
 
     root = Path(dataset.location)
+
+    if task == "classify":
+        # "folder" format downloads directly as train/<class>/*.jpg — no bbox
+        # labels, no data.yaml. Nothing to write; just confirm the shape.
+        names = _classify_classes(root)
+        if not (root / "train").is_dir() or not names:
+            sys.exit(
+                f"ERROR: expected an ImageFolder layout (train/<class>/*.jpg) at {root} "
+                f"after downloading format={fmt!r}. Got: "
+                f"{sorted(p.name for p in root.iterdir())}"
+            )
+        print(f"Dataset ready: {root}  classes={names}")
+        return root
+
     names = _parse_names_from_yaml(root) or ["object"]
     yaml_path = _write_data_yaml(root, names)
     print(f"Dataset ready: {root}  classes={names}")
@@ -147,6 +180,56 @@ def generate_synthetic(out_dir: Path) -> Path:
     return yaml_path
 
 
+def _draw_class_image(seed: int, img_size: int, class_idx: int, n_classes: int):
+    """A distinct, deterministic-per-class solid color + shape — enough for a
+    classifier to learn to discriminate without needing real data."""
+    from PIL import Image, ImageDraw
+
+    rng = random.Random(seed)
+    # Spread base hues evenly across classes so classes are visually distinct
+    # regardless of how many there are.
+    hue = class_idx / max(n_classes, 1)
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb(hue, 0.6, 0.9)
+    base = (int(r * 255), int(g * 255), int(b * 255))
+
+    img = Image.new("RGB", (img_size, img_size), base)
+    draw = ImageDraw.Draw(img)
+    # A random-position shape on top of the base color adds enough per-image
+    # variation that a classifier can't just memorize a flat color.
+    shapes = rng.randint(1, 3)
+    for _ in range(shapes):
+        sw = rng.randint(img_size // 6, img_size // 3)
+        cx = rng.randint(sw, img_size - sw)
+        cy = rng.randint(sw, img_size - sw)
+        shade = tuple(max(0, min(255, c + rng.randint(-40, 40))) for c in base)
+        draw.ellipse([cx - sw // 2, cy - sw // 2, cx + sw // 2, cy + sw // 2], fill=shade)
+    return img
+
+
+def generate_synthetic_classify(out_dir: Path) -> Path:
+    """ImageFolder-layout synthetic dataset: train/<class>/*.jpg, etc."""
+    labels_env = os.environ.get("LABELS", "class_a,class_b")
+    names = [n.strip() for n in labels_env.split(",") if n.strip()]
+    if len(names) < 2:
+        names = ["class_a", "class_b"]
+    img_size = int(os.environ.get("IMGSZ", 160))
+
+    splits = {"train": 20, "valid": 6, "test": 6}
+    idx = 0
+    for split, n in splits.items():
+        for ci, name in enumerate(names):
+            class_dir = out_dir / split / name
+            class_dir.mkdir(parents=True, exist_ok=True)
+            for _ in range(n):
+                img = _draw_class_image(seed=idx, img_size=img_size, class_idx=ci, n_classes=len(names))
+                img.save(class_dir / f"synthetic_{idx:04d}.jpg", quality=90)
+                idx += 1
+
+    print(f"Synthetic classification dataset: {idx} images under {out_dir}  classes={names}")
+    return out_dir
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -159,17 +242,25 @@ def main() -> None:
     out_dir = Path(args.out or os.environ.get("DATASET_DIR", "dataset")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    task = os.environ.get("TASK", "detect")
+
     source = args.source
     if source is None:
         source = "synthetic" if os.environ.get("SMOKE") == "1" else "roboflow"
 
     if source == "roboflow":
-        yaml_path = download_roboflow(out_dir)
+        result_path = download_roboflow(out_dir, task)
+    elif task == "classify":
+        print("SMOKE/synthetic mode — generating placeholder dataset (no Roboflow key needed)")
+        result_path = generate_synthetic_classify(out_dir)
     else:
         print("SMOKE/synthetic mode — generating placeholder dataset (no Roboflow key needed)")
-        yaml_path = generate_synthetic(out_dir)
+        result_path = generate_synthetic(out_dir)
 
-    print(f"DATA_YAML={yaml_path}")
+    if task == "classify":
+        print(f"DATASET_ROOT={result_path}")
+    else:
+        print(f"DATA_YAML={result_path}")
 
 
 if __name__ == "__main__":

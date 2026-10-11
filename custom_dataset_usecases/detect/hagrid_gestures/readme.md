@@ -39,7 +39,7 @@ truth. Neither has been run yet — the download is yours to kick off.
 ### 1. Fetch the raw HaGRID pieces (cached, run once)
 
 ```bash
-custom_dataset_usecases/hagrid_gestures/get_dataset.sh
+custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh
 ```
 
 Defaults to `HAGRID_SOURCE=subsample`: **one 1.01 GB zip**, 31,833 images across
@@ -69,7 +69,7 @@ stay balanced at roughly 8,800 images total.
 For the 512p release instead:
 
 ```bash
-HAGRID_SOURCE=full512 custom_dataset_usecases/hagrid_gestures/get_dataset.sh
+HAGRID_SOURCE=full512 custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh
 ```
 
 Its URLs are the **unverified** SberCloud paths from the upstream README, and
@@ -77,7 +77,7 @@ upstream re-hosts between releases. Every URL is HEAD-checked *before* any large
 transfer, so a stale link fails in seconds and prints the override to use:
 
 ```bash
-HAGRID_SUBSAMPLE_URL=<url> custom_dataset_usecases/hagrid_gestures/get_dataset.sh
+HAGRID_SUBSAMPLE_URL=<url> custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh
 ```
 
 `build_dataset.py` does not care which release you land on — it finds annotations
@@ -90,10 +90,10 @@ delete afterwards to reclaim the space — `build_dataset.py` only reads it.
 ### 2. Build the YOLO dataset
 
 ```bash
-python3 custom_dataset_usecases/hagrid_gestures/build_dataset.py
+python3 custom_dataset_usecases/detect/hagrid_gestures/build_dataset.py
 ```
 
-Writes `datasets/hagrid_gestures/{train,valid,test}/` plus `data.yaml`, and
+Writes `datasets/detect/hagrid_gestures/{train,valid,test}/` plus `data.yaml`, and
 prints the per-class counts, the skip reasons, and the box-area distribution.
 Actual output (2026-08-07, 204 MB on disk, ~1 min):
 
@@ -132,7 +132,7 @@ to the 500k release if you want the cap to matter.
 
 ```bash
 echo 'ROBOFLOW_API_KEY=unused_no_roboflow_project' \
-  > custom_dataset_usecases/hagrid_gestures/.env
+  > custom_dataset_usecases/detect/hagrid_gestures/.env
 ```
 
 ---
@@ -202,36 +202,36 @@ project).
 **Full run — train, convert, flash, stream:**
 
 ```bash
-./flow.sh --hagrid_gestures --yolo26 --skip-fetch
+./flow.sh --detect/hagrid_gestures --skip-fetch
 ```
 
 **Train and convert, no hardware needed:**
 
 ```bash
-./flow.sh --hagrid_gestures --yolo26 --skip-fetch --skip-flash
+./flow.sh --detect/hagrid_gestures --skip-fetch --skip-flash
 ```
 
 **One-epoch smoke test** — proves the data loads, the head rebuilds for `nc=5`,
 and the labels parse, in a couple of minutes:
 
 ```bash
-SMOKE=1 ./flow.sh --hagrid_gestures --yolo26 --skip-fetch --skip-convert --skip-flash
+SMOKE=1 ./flow.sh --detect/hagrid_gestures --skip-fetch --skip-convert --skip-flash
 ```
 
 **Re-convert existing weights** (e.g. after changing `IMGSZ`):
 
 ```bash
-./flow.sh --hagrid_gestures --yolo26 --skip-fetch --skip-train
+./flow.sh --detect/hagrid_gestures --skip-fetch --skip-train
 ```
 
 **Flash + stream an already-converted model** (hold BOOT, press RESET when
 prompted):
 
 ```bash
-./flow.sh --hagrid_gestures --yolo26 --skip-fetch --skip-train --skip-convert
+./flow.sh --detect/hagrid_gestures --skip-fetch --skip-train --skip-convert
 ```
 
-Artifacts land in `datasets/hagrid_gestures/`: `runs/train/weights/best.pt`,
+Artifacts land in `datasets/detect/hagrid_gestures/`: `runs/train/weights/best.pt`,
 `runs/train/results.csv`, `runs/train/confusion_matrix.png`, and
 `convert/yolo26_int8_vela.tflite`.
 

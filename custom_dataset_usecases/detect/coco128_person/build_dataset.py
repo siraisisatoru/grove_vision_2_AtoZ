@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Build datasets/coco128_person/ — a single-class person dataset from coco128.
+"""Build datasets/detect/coco128_person/ — a single-class person dataset from coco128.
 
 Run from the repo root:
-    python3 custom_dataset_usecases/coco128_person/build_dataset.py
+    python3 custom_dataset_usecases/detect/coco128_person/build_dataset.py
 
 datasets/ is gitignored, so this script is the reproducible source of truth for
 the dataset layout. It is idempotent: re-running rebuilds from scratch.
 
-Source: datasets/coco_yolo26/ (the coco128 asset, laid out by that use case's
-readme). If it is missing, this script says so rather than guessing.
+Source: datasets/detect/coco_yolo26/ (the coco128 asset, laid out by that use
+case's readme). If it is missing, this script says so rather than guessing.
 
 What it does:
   * keeps only images containing at least one COCO class 0 (person) box
@@ -29,9 +29,9 @@ from pathlib import Path
 PERSON_CLASS = "0"   # COCO class index for person, and the only class we keep
 VALID_EVERY = 5      # every Nth person image goes to valid/ (deterministic)
 
-repo = Path(__file__).resolve().parents[2]
-src = repo / "datasets" / "coco_yolo26"
-dst = repo / "datasets" / "coco128_person"
+repo = Path(__file__).resolve().parents[3]
+src = repo / "datasets" / "detect" / "coco_yolo26"
+dst = repo / "datasets" / "detect" / "coco128_person"
 
 src_images = src / "train" / "images"
 src_labels = src / "train" / "labels"
@@ -39,7 +39,7 @@ src_labels = src / "train" / "labels"
 if not src_images.is_dir() or not src_labels.is_dir():
     sys.exit(
         f"Source coco128 not found at {src}.\n"
-        f"Run the one-time setup in custom_dataset_usecases/coco_yolo26/readme.md "
+        f"Run the one-time setup in custom_dataset_usecases/detect/coco_yolo26/readme.md "
         f"first — this dataset is derived from it."
     )
 

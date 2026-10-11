@@ -10,10 +10,17 @@ Usage:
   python flash_model.py --port /dev/cu.usbmodem5A7A0167681 \\
       --model-file my_model.tflite --address 0xB7B000
 
+  # Flash firmware + several models in one pass (e.g. face recognition), no
+  # BOOT button needed:
+  python flash_model.py --firmware face_recognition.img --software-reset \\
+      --model-at scrfd_vela.tflite 0x200000 \\
+      --model-at mobilefacenet_vela.tflite 0x400000
+
   # List available pre-built models:
   python flash_model.py --list-models
 
-Device MUST be in BOOT mode before running (hold BOOT + press RESET).
+Device MUST be in BOOT mode before running (hold BOOT + press RESET), unless
+--software-reset is given (the flasher toggles RTS to enter the bootloader).
 
 Custom model training notes:
   - Train a YOLO or MobileNet model using Edge Impulse, Roboflow, or SenseCraft AI
@@ -63,9 +70,15 @@ def main():
     parser.add_argument("--model-file", help="Path to custom .tflite file")
     parser.add_argument("--address", default="0x400000",
                         help="Flash address in hex (default: 0x400000 = SSCMA slot 1)")
+    parser.add_argument("--model-at", nargs=2, action="append", default=[],
+                        metavar=("FILE", "ADDR"),
+                        help="Flash a model FILE at hex ADDR; repeat for several models "
+                             "(e.g. --model-at scrfd.tflite 0x200000 --model-at mfn.tflite 0x400000)")
     parser.add_argument("--firmware", "-f",
-                        help="Path to firmware .img to flash before the model (required first time or after fw rebuild)")
+                        help="Path to firmware .img to flash before the model(s) (required first time or after fw rebuild)")
     parser.add_argument("--offset", default="0x0", help="Model offset (default: 0x0)")
+    parser.add_argument("--software-reset", action="store_true",
+                        help="Enter the bootloader via an RTS toggle instead of a BOOT-button press")
     parser.add_argument("--list-models", action="store_true")
     parser.add_argument("--list-ports", action="store_true")
     parser.add_argument("--cache-dir", default="./models")
@@ -93,21 +106,26 @@ def main():
     if not args.port:
         sys.exit("Error: no Grove Vision AI V2 detected. Pass --port explicitly.")
 
-    model_path = args.model_file
-    address = int(args.address, 16)
     offset = int(args.offset, 16)
 
-    if not model_path:
-        if not args.model:
-            print("Error: --model or --model-file required")
-            sys.exit(1)
+    # Build the models list. --model-at (repeatable) takes precedence; otherwise
+    # fall back to the single --model-file / --model (shortcut, may auto-download)
+    # path so existing callers keep working.
+    models = []
+    if args.model_at:
+        for file, addr in args.model_at:
+            if not os.path.isfile(file):
+                sys.exit(f"Error: model file not found: {file}")
+            models.append((file, int(addr, 16), offset))
+    elif args.model_file:
+        models.append((args.model_file, int(args.address, 16), offset))
+    elif args.model:
         filename = MODEL_SHORTCUTS.get(args.model, args.model)
         if not filename.endswith(".tflite"):
             filename += ".tflite"
-        # Extract address from filename if present
-        if "_0x" in filename:
-            addr_str = "0x" + filename.split("_0x")[1].replace(".tflite", "")
-            address = int(addr_str, 16)
+        address = int(args.address, 16)
+        if "_0x" in filename:  # address encoded in the shortcut filename
+            address = int("0x" + filename.split("_0x")[1].replace(".tflite", ""), 16)
         print(f"\n📥 Downloading model: {filename}")
         os.makedirs(args.cache_dir, exist_ok=True)
 
@@ -119,22 +137,29 @@ def main():
         model_path = download_latest_model(filename, dest_dir=args.cache_dir,
                                            progress_cb=dl_progress)
         print(f"\n  ✅ Model ready: {model_path}\n")
+        models.append((model_path, address, offset))
 
-    print(f"\n🧠 Flashing model to {args.port}")
-    print(f"   File:    {model_path}")
-    print(f"   Address: 0x{address:X}")
+    if not models and not args.firmware:
+        sys.exit("Error: nothing to flash — pass --firmware and/or --model/--model-file/--model-at")
+
+    print(f"\n🧠 Flashing to {args.port}")
+    if args.firmware:
+        print(f"   firmware: {args.firmware}")
+    for file, addr, _ in models:
+        print(f"   0x{addr:06X}: {file}")
     print("─" * 50)
-    print("ACTION NEEDED: Hold BOOT button and press RESET on the device now!")
-    print("─" * 50)
+    if not args.software_reset:
+        print("ACTION NEEDED: Hold BOOT button and press RESET on the device now!")
+        print("─" * 50)
 
     flasher = Flasher(port=args.port, baudrate=921600, progress_callback=progress)
-    ok = flasher.flash(firmware_path=args.firmware or None,
-                       models=[(model_path, address, offset)])
+    ok = flasher.flash(firmware_path=args.firmware or None, models=models,
+                       software_reset=args.software_reset)
 
     if ok:
-        print("\n✅ Model flashed! Device rebooting.")
+        print("\n✅ Flash complete! Device rebooting.")
     else:
-        print("\n❌ Model flash failed.")
+        print("\n❌ Flash failed.")
         sys.exit(1)
 
 

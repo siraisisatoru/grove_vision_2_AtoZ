@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build datasets/coco_val_person/ — person-only detection set from COCO val2017.
+"""Build datasets/detect/coco_val_person/ — person-only detection set from COCO val2017.
 
 Run from the repo root:
-    python3 custom_dataset_usecases/coco_val_person/build_dataset.py
+    python3 custom_dataset_usecases/detect/coco_val_person/build_dataset.py
 
 datasets/ is gitignored, so this script is the reproducible source of truth.
 It is idempotent: re-running rebuilds the dataset from the cached raw download.
@@ -38,9 +38,9 @@ VALID_EVERY = 10     # every Nth person image goes to valid/ (deterministic)
 # are dropped entirely rather than kept as background.
 MIN_BOX_AREA = 0.0
 
-repo = Path(__file__).resolve().parents[2]
+repo = Path(__file__).resolve().parents[3]
 raw = repo / "datasets" / "_coco_raw"
-dst = repo / "datasets" / "coco_val_person"
+dst = repo / "datasets" / "detect" / "coco_val_person"
 
 DOWNLOADS = [
     ("coco2017labels.zip",

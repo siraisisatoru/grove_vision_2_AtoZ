@@ -22,8 +22,8 @@ once the approach is confirmed.
 idempotent — re-running rebuilds from scratch:
 
 ```bash
-# Prerequisite: datasets/coco_yolo26/ must exist (see that use case's readme)
-python3 custom_dataset_usecases/coco128_person/build_dataset.py
+# Prerequisite: datasets/detect/coco_yolo26/ must exist (see that use case's readme)
+python3 custom_dataset_usecases/detect/coco128_person/build_dataset.py
 ```
 
 Expected output:
@@ -40,7 +40,7 @@ Roboflow call happens):
 
 ```bash
 echo 'ROBOFLOW_API_KEY=unused_no_roboflow_project' \
-  > custom_dataset_usecases/coco128_person/.env
+  > custom_dataset_usecases/detect/coco128_person/.env
 ```
 
 ### What the build script does, and why
@@ -73,30 +73,30 @@ project). Unlike `coco_yolo26`, **training is the point here** — do not pass
 **Full run — train, convert, flash, stream:**
 
 ```bash
-./flow.sh --coco128_person --yolo26 --skip-fetch
+./flow.sh --detect/coco128_person --skip-fetch
 ```
 
 **Train and convert, no hardware needed** (step 5 reports "No Grove Vision AI V2
 found", which is harmless):
 
 ```bash
-./flow.sh --coco128_person --yolo26 --skip-fetch --skip-flash
+./flow.sh --detect/coco128_person --skip-fetch --skip-flash
 ```
 
 **Re-convert existing weights** (after editing `IMGSZ`, say):
 
 ```bash
-./flow.sh --coco128_person --yolo26 --skip-fetch --skip-train
+./flow.sh --detect/coco128_person --skip-fetch --skip-train
 ```
 
 **Flash + stream an already-converted model** (hold BOOT, press RESET when
 prompted):
 
 ```bash
-./flow.sh --coco128_person --yolo26 --skip-fetch --skip-train --skip-convert
+./flow.sh --detect/coco128_person --skip-fetch --skip-train --skip-convert
 ```
 
-Artifacts land in `datasets/coco128_person/`: weights at
+Artifacts land in `datasets/detect/coco128_person/`: weights at
 `runs/train/weights/best.pt`, training curves at `runs/train/results.csv`, and
 the deployable model at `convert/yolo26_int8_vela.tflite`.
 

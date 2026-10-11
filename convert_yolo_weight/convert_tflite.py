@@ -1,16 +1,15 @@
 """Export a YOLO .pt checkpoint to a Vela-compiled INT8 TFLite for the Himax WE2.
 
-TWO fully isolated pipelines, selected by --yolo26:
+TWO architectures, selected by --yolo26, both exported through the SAME LiteRT
+pipeline (_export_litert) with official ultralytics >= 8.4:
 
   YOLO11 (default)              YOLO26 (--yolo26)
   ----------------              -----------------
   reg_max == 16 (DFL)           reg_max == 1 (DFL disabled, nn.Identity)
-  kris-himax ultralytics 8.3.x  official ultralytics >= 8.4
-  onnx2tf backend               LiteRT backend
-  export int8=True,             export quantize='int8', end2end=False
-         no_post=True           + _force_int8_boundary()
-  -> best_saved_model/             -> best_int8.tflite (next to the .pt)
-     best_full_integer_quant
+  box[i] channels = 64           box[i] channels = 4
+
+export quantize='int8', end2end=False, plus _force_int8_boundary() to force a
+full-integer graph boundary; output is best_int8.tflite next to the .pt.
 
 BOTH split the detection head into 6 raw per-stride tensors, because both WE2
 decoders parse the same channels-first contract (Yolo11::isValid() /
@@ -23,13 +22,27 @@ Yolo26::isValid()):
 Anything else loads on the device, binds to no decoder, and silently detects
 nothing. verify_export() enforces this before Vela runs.
 
-The two paths share only split_detection_head() and the Vela invocation. Do not
-reintroduce cross-branch conditionals: the point of the split is that a change
-to one architecture cannot silently alter the other.
+The two paths share split_detection_head(), _export_litert(), and the Vela
+invocation, differing only in reg_max/box-channel-count. Do not reintroduce
+cross-branch conditionals: the point of the split is that a change to one
+architecture cannot silently alter the other.
 
-Which Docker image supplies which ultralytics is flow.sh's job (--yolo26 routes
-to grove_vision_convert_yolo26). This script asserts it got what it expected and
-fails loudly otherwise, rather than mis-converting in silence.
+A THIRD, separate pipeline (--classify) exports a plain image classifier —
+no head-splitting, no anchor decode. It matches ma::model::Classifier's
+isValid() (sscma_micro/sscma/core/model/ma_model_classifier.cpp): 1 input
+image tensor, 1 output tensor shaped (1, num_classes). This is simpler than
+detection: Ultralytics' classify head already emits a single dense tensor,
+so there is nothing to split. Only _force_int8_boundary() is shared with the
+detection paths (the float32-boundary bug is generic to any Ultralytics
+LiteRT export, not detection-specific).
+
+An earlier YOLO11 pipeline used a kris-himax ultralytics 8.3.x fork with an
+onnx2tf backend; it was dropped because onnx2tf emits NHWC box tensors and
+scrambles the 6 output heads out of order (see _export_litert's docstring).
+Both architectures now build from the single grove_vision_convert image
+(convert_yolo_weight/Dockerfile) — --yolo26 selects the pipeline branch below,
+not the Docker image. This script asserts the loaded checkpoint matches
+--yolo26 and fails loudly on a mismatch, rather than mis-converting in silence.
 """
 
 import argparse
@@ -78,6 +91,13 @@ def build_calibration_yaml(args, output_dir: Path) -> str:
         return args.data
 
     data_dir = Path(args.data_dir).resolve()
+
+    if args.classify:
+        # Already an ImageFolder layout (train/<class>/*.jpg, ...) — Ultralytics'
+        # classify export wants the dataset ROOT directly, not a yaml. No bbox
+        # calibration subset to build either; the full val set is used as-is.
+        return str(data_dir)
+
     names = _parse_names(data_dir / "data.yaml") or ["object"]
 
     val_src = data_dir / "valid" / "images"
@@ -252,6 +272,98 @@ def verify_export(tflite_path: Path, *, is_yolo26: bool, imgsz: int) -> None:
         print("Export verification passed.")
 
 
+def verify_export_classifier(tflite_path: Path, *, imgsz: int) -> None:
+    """Check the exported TFLite matches ma::model::Classifier::isValid()
+    (sscma_micro/sscma/core/model/ma_model_classifier.cpp):
+
+        1 input : (1, H, W, C) or (1, C, H, W), H==W, H>=32, H%32==0, C in {1,3}
+        1 output: (1, num_classes), num_classes >= 2
+
+    Unlike detection there is no head-splitting or anchor decode to check —
+    a classify export is just one dense tensor in, one dense tensor out.
+    """
+    interp = _load_interpreter(tflite_path)
+    if interp is None:
+        print("WARNING: no TFLite runtime available in this image — skipping export "
+              "verification. The Vela step will still run.")
+        return
+
+    try:
+        interp.allocate_tensors()
+    except Exception as e:
+        print(f"WARNING: could not allocate tensors for verification ({e}); "
+              f"reporting details only.")
+
+    inputs = interp.get_input_details()
+    outputs = interp.get_output_details()
+
+    print("\n--- exported model boundary ---")
+    for d in inputs:
+        print(f"  input  {d['name']}: dtype={d['dtype'].__name__} "
+              f"shape={list(d['shape'])} quant={d['quantization']}")
+    for d in outputs:
+        print(f"  output {d['name']}: dtype={d['dtype'].__name__} "
+              f"shape={list(d['shape'])} quant={d['quantization']}")
+    print("--- end boundary ---\n")
+
+    problems: list[str] = []
+    import numpy as np
+
+    if len(inputs) != 1 or len(outputs) != 1:
+        problems.append(
+            f"expected 1 input / 1 output for a classifier, got "
+            f"{len(inputs)} input(s) / {len(outputs)} output(s). "
+            f"Classifier::isValid() requires exactly one of each.")
+    else:
+        ishape = list(inputs[0]["shape"])
+        if len(ishape) != 4:
+            problems.append(f"input shape {ishape} is not rank-4 (N,H,W,C or N,C,H,W).")
+        else:
+            nchw = ishape[1] == 3 or ishape[1] == 1
+            h, w, c = (ishape[2], ishape[3], ishape[1]) if nchw else (ishape[1], ishape[2], ishape[3])
+            print(f"Input layout: {'NCHW' if nchw else 'NHWC'}  {h}x{w}  C={c}")
+            if h != w or h < 32 or h % 32 != 0 or c not in (1, 3):
+                problems.append(
+                    f"input is {h}x{w} C={c}; Classifier::isValid() requires "
+                    f"square, >=32, a multiple of 32, and C in {{1,3}}.")
+            if (h, w) != (imgsz, imgsz):
+                problems.append(f"input is {h}x{w} but --imgsz={imgsz}")
+
+        oshape = list(outputs[0]["shape"])
+        if len(oshape) < 2 or oshape[0] != 1 or oshape[1] < 2:
+            problems.append(
+                f"output shape {oshape} does not match Classifier::isValid() "
+                f"(expects (1, num_classes) with num_classes >= 2).")
+
+    # Full-integer boundary — same requirement and same underlying bug
+    # (_force_int8_boundary()) as the detection paths.
+    bad_io = [d for d in (inputs + outputs) if d["dtype"] != np.int8]
+    if bad_io:
+        kinds = sorted({d["dtype"].__name__ for d in bad_io})
+        problems.append(
+            f"{len(bad_io)} of {len(inputs) + len(outputs)} boundary tensors are "
+            f"{'/'.join(kinds)}, not int8. This is NOT a full-integer model: the "
+            f"firmware must quantize/dequantize on the CPU every frame and the "
+            f"Ethos-U cannot own the whole graph.")
+
+    if problems:
+        print("=" * 72)
+        print("EXPORT VERIFICATION FAILED")
+        for p in problems:
+            print(f"  * {p}")
+        print("=" * 72)
+        if os.environ.get("ALLOW_BAD_EXPORT") == "1":
+            print("ALLOW_BAD_EXPORT=1 set — continuing to Vela anyway.")
+        else:
+            raise SystemExit(
+                "Refusing to Vela-compile a model that does not match the WE2 "
+                "firmware's expectations. Set ALLOW_BAD_EXPORT=1 to override "
+                "(the resulting on-device behaviour is known-degraded)."
+            )
+    else:
+        print("Export verification passed.")
+
+
 # ---------------------------------------------------------------------------
 # Shared: detection-head split
 # ---------------------------------------------------------------------------
@@ -381,9 +493,9 @@ def _export_litert(model, model_path: Path, args, data_arg: str,
     if ul_ver < (8, 4):
         raise SystemExit(
             f"This pipeline requires official ultralytics >= 8.4 (found "
-            f"{_ul.__version__}). The kris-himax 8.3.x fork exports via onnx2tf, "
+            f"{_ul.__version__}). Older forks/versions may export via onnx2tf, "
             f"which produces NHWC outputs in scrambled order — rejected by both "
-            f"WE2 decoders. Use the grove_vision_convert_yolo26 image.")
+            f"WE2 decoders. Rebuild the grove_vision_convert image (--rebuild-docker).")
 
     split_detection_head(model)
 
@@ -435,19 +547,60 @@ def _export_litert(model, model_path: Path, args, data_arg: str,
 # YOLO26 pipeline
 # ---------------------------------------------------------------------------
 
-def export_yolo26(model, model_path: Path, args, data_arg: str, output_dir: Path) -> Path:
+def export_yolo26(model, model_path: Path, args, data_arg: str, output_dir: Path,
+                   output_name: str | None = None) -> Path:
     """reg_max==1: DFL disabled, so cv2[i] emits 4 channels of direct LTRB."""
-    return _export_litert(model, model_path, args, data_arg, output_dir, arch="yolo26")
+    return _export_litert(model, model_path, args, data_arg, output_dir, arch=output_name or "yolo26")
 
 
 # ---------------------------------------------------------------------------
 # YOLO11 pipeline
 # ---------------------------------------------------------------------------
 
-def export_yolo11(model, model_path: Path, args, data_arg: str, output_dir: Path) -> Path:
+def export_yolo11(model, model_path: Path, args, data_arg: str, output_dir: Path,
+                   output_name: str | None = None) -> Path:
     """reg_max==16: cv2[i] emits 64 channels of raw DFL logits, which the
     firmware decodes on-device via compute_dfl() in ma_model_yolo11.cpp."""
-    return _export_litert(model, model_path, args, data_arg, output_dir, arch="yolo11")
+    return _export_litert(model, model_path, args, data_arg, output_dir, arch=output_name or "yolo11")
+
+
+# ---------------------------------------------------------------------------
+# Classification pipeline
+# ---------------------------------------------------------------------------
+
+def export_classifier(model, model_path: Path, args, data_arg: str, output_dir: Path,
+                       output_name: str | None = None) -> Path:
+    """Plain int8 image-classifier export — no head split, no anchor decode.
+
+    Ultralytics' classify head already emits one dense (1, num_classes) tensor,
+    which is exactly what ma::model::Classifier::isValid() expects, so unlike
+    _export_litert() there is nothing to patch on the model graph. Only the
+    float32-graph-boundary bug (_force_int8_boundary()) is shared with the
+    detection paths, since it's a generic Ultralytics LiteRT export issue.
+    """
+    import ultralytics as _ul
+    ul_ver = tuple(int(x) for x in _ul.__version__.split(".")[:2])
+    if ul_ver < (8, 4):
+        raise SystemExit(
+            f"This pipeline requires official ultralytics >= 8.4 (found "
+            f"{_ul.__version__}).")
+
+    _force_int8_boundary()
+
+    model.export(format=args.format, imgsz=args.imgsz, data=data_arg, quantize="int8")
+    print("export success")
+
+    exported = model_path.parent / f"{model_path.stem}_int8.tflite"
+    if not exported.exists():
+        candidates = sorted(model_path.parent.glob(f"{model_path.stem}*.tflite"))
+        if not candidates:
+            raise FileNotFoundError(f"Could not find exported .tflite next to {model_path}")
+        exported = candidates[0]
+
+    dest = output_dir / f"{output_name or 'classify'}_int8.tflite"
+    shutil.copy2(str(exported), str(dest))
+    print(f"Copied export -> {dest}")
+    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +629,16 @@ def main():
                     help="Select the YOLO26 pipeline: asserts reg_max==1, splits the "
                          "detection head into 6 raw box/cls tensors, and exports via "
                          "LiteRT. Without this flag the YOLO11 pipeline runs instead "
-                         "(reg_max==16, DFL baked in, onnx2tf). The two paths are "
-                         "fully isolated.")
+                         "(reg_max==16, DFL baked in, same LiteRT export). The two "
+                         "paths are fully isolated aside from that shared export path. "
+                         "Mutually exclusive with --classify.")
+    ap.add_argument("--classify", action="store_true", default=False,
+                    help="Select the image-classification pipeline: plain int8 export "
+                         "of a classify-task checkpoint (yolo11n-cls.pt / "
+                         "yolo26n-cls.pt), matching ma::model::Classifier::isValid() "
+                         "(1 input image tensor, 1 output (1,num_classes) tensor). No "
+                         "head-splitting or anchor decode. Mutually exclusive with "
+                         "--yolo26.")
     ap.add_argument("--skip-verify", action="store_true", default=False,
                     help="Skip post-export verification of the model boundary. Not "
                          "recommended: verification catches float32-boundary and "
@@ -488,7 +649,19 @@ def main():
                          "./output next to this script). flow.sh points this at the "
                          "use-case's dataset directory so converted weights live "
                          "alongside the training run that produced them.")
+    ap.add_argument("--output-name", default=None, metavar="NAME",
+                    help="Stem for the exported/Vela filenames (default: yolo11/"
+                         "yolo26/classify depending on pipeline). flow.sh passes "
+                         "the checkpoint name with any .pt suffix stripped (e.g. "
+                         "yolo11n-cls), so retraining the same use case with a "
+                         "different MODEL never overwrites a previous "
+                         "architecture's converted output.")
     args = ap.parse_args()
+
+    if args.classify and args.yolo26:
+        raise SystemExit("--classify and --yolo26 are mutually exclusive: "
+                          "classification is a single shared pipeline, independent "
+                          "of the YOLO11/YOLO26 architecture flag.")
 
     script_dir = Path(__file__).resolve().parent
     output_dir = Path(args.output_dir).resolve() if args.output_dir else script_dir / "output"
@@ -501,6 +674,33 @@ def main():
 
     model_path = Path(args.model).resolve()
     model = YOLO(str(model_path))
+
+    if args.classify:
+        print("\n=== Pipeline: Classifier (LiteRT, full-integer, single tensor) ===\n")
+        tflite_path = export_classifier(model, model_path, args, data_arg, output_dir,
+                                        output_name=args.output_name)
+
+        if not args.skip_verify:
+            verify_export_classifier(tflite_path, imgsz=args.imgsz)
+
+        print(f"Input to Vela : {tflite_path}")
+
+        subprocess.run(
+            [
+                "vela",
+                "--accelerator-config", "ethos-u55-64",
+                "--config", str(script_dir / "himax_vela.ini"),
+                "--system-config", "My_Sys_Cfg",
+                "--memory-mode", "My_Mem_Mode_Parent",
+                "--output-dir", str(output_dir),
+                str(tflite_path),
+            ],
+            check=True,
+        )
+
+        vela_out = output_dir / (tflite_path.stem + "_vela.tflite")
+        print(f"\nDone! Deploy this file to WE2: {vela_out}")
+        return
 
     # Detect the architecture from the checkpoint itself — reg_max==1 means DFL
     # was disabled (nn.Identity()), which only YOLO26's head does. YOLO11/v8
@@ -525,14 +725,17 @@ def main():
             f"{model_path.name} IS a YOLO26 model (reg_max=1) but --yolo26 was not "
             f"passed. The YOLO11 pipeline would bake in a DFL decode this "
             f"architecture does not have, producing a model that never detects. "
-            f"Pass --yolo26 (flow.sh does this via its own --yolo26).")
+            f"Pass --yolo26 (flow.sh derives this automatically from "
+            f"MODEL=yolo26*.pt in config.env).")
 
     print(f"\n=== Pipeline: {'YOLO26' if args.yolo26 else 'YOLO11'} "
           f"(LiteRT, full-integer, 6 raw heads) ===\n")
     if args.yolo26:
-        tflite_path = export_yolo26(model, model_path, args, data_arg, output_dir)
+        tflite_path = export_yolo26(model, model_path, args, data_arg, output_dir,
+                                    output_name=args.output_name)
     else:
-        tflite_path = export_yolo11(model, model_path, args, data_arg, output_dir)
+        tflite_path = export_yolo11(model, model_path, args, data_arg, output_dir,
+                                    output_name=args.output_name)
 
     if not args.skip_verify:
         verify_export(tflite_path, is_yolo26=args.yolo26, imgsz=args.imgsz)

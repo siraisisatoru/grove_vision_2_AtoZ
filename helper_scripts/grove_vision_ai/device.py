@@ -26,6 +26,16 @@ log = logging.getLogger(__name__)
 BAUDRATE = 921600
 READ_TIMEOUT = 5.0
 
+# Firmware bug workaround (sscma_face_recognition <= v1.2, likely all DMA-TX
+# console firmwares): the WE2's shared DMAC3 interrupt can lose a UART TX-done
+# event under load, silencing the stream even though the board keeps running.
+# Any byte SENT to the board makes the driver ISR re-scan its status and
+# dispatch the overdue completion — proven on hardware to revive the stream
+# instantly. A lone b"\n" is consumed silently by the firmware's AT parser
+# (single-char lines are dropped before execute()), so it costs no response
+# traffic. Enabled per-connection via connect(..., keepalive=True).
+KEEPALIVE_INTERVAL = 0.2  # seconds
+
 # CH343 USB-serial bridge used on Grove Vision AI V2
 _CH343_VID = 0x1A86
 _CH343_PID = 0x55D3
@@ -124,6 +134,9 @@ class GroveVisionAI:
         self._raw_callback: Optional[Callable[[str], None]] = None
         self.port: Optional[str] = None
         self.is_streaming = False
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._keepalive_stop = threading.Event()
+        self._rx_seen = threading.Event()  # set by reader on first received data
         # ma_model_type_t of the decoder the firmware bound to the loaded model.
         # Populated by start_invoke() from the device's own INVOKE response; stays
         # None until then. See MODEL_TYPE above for why this is the only reliable source.
@@ -133,9 +146,11 @@ class GroveVisionAI:
     # Connection
     # -------------------------------------------------------------------------
 
-    def connect(self, port: str, baudrate: int = BAUDRATE, boot_wait: float = 4.0) -> bool:
+    def connect(self, port: str, baudrate: int = BAUDRATE, boot_wait: float = 4.0,
+                keepalive: bool = False) -> bool:
         if self._ser and self._ser.is_open:
             self.disconnect()
+        self._rx_seen.clear()
         self._ser = serial.Serial(
             port=port,
             baudrate=baudrate,
@@ -158,9 +173,46 @@ class GroveVisionAI:
         if boot_wait > 0:
             time.sleep(boot_wait)
             self._ser.reset_input_buffer()
+        if keepalive:
+            self.start_keepalive()
         return True
 
+    def start_keepalive(self, interval: float = KEEPALIVE_INTERVAL):
+        """Periodically poke the board with a benign byte so a lost UART TX-done
+        interrupt (firmware DMAC3 bug — see KEEPALIVE_INTERVAL) is re-dispatched
+        by the RX interrupt within ~interval seconds. Reuses the already-open
+        port object; NEVER reopens (open() toggles RTS and hard-resets the board).
+        """
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            return
+        self._keepalive_stop.clear()
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive_loop, args=(interval,),
+            daemon=True, name="sscma-keepalive")
+        self._keepalive_thread.start()
+
+    def stop_keepalive(self):
+        self._keepalive_stop.set()
+        if self._keepalive_thread:
+            self._keepalive_thread.join(timeout=1.0)
+            self._keepalive_thread = None
+
+    def _keepalive_loop(self, interval: float):
+        while not self._keepalive_stop.wait(interval):
+            if not (self._running and self._ser and self._ser.is_open):
+                continue
+            # Don't poke the bootloader window right after the RTS reset:
+            # only send once the firmware has said something.
+            if not self._rx_seen.is_set():
+                continue
+            try:
+                with self._write_lock:  # never interleave with _cmd() writes
+                    self._ser.write(b"\n")
+            except Exception as e:
+                log.debug("Keepalive write error: %s", e)
+
     def disconnect(self):
+        self.stop_keepalive()
         self._running = False
         self.is_streaming = False
         if self._read_thread:
@@ -215,6 +267,7 @@ class GroveVisionAI:
                 if waiting:
                     chunk += self._ser.read(waiting)
                 buf.extend(chunk)
+                self._rx_seen.set()
                 while True:
                     idx = buf.find(b"\n")
                     if idx < 0:

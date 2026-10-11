@@ -2,11 +2,12 @@
 # get_dataset.sh — download the raw HaGRID pieces this use case needs.
 #
 # Run from anywhere:
-#   custom_dataset_usecases/hagrid_gestures/get_dataset.sh
+#   custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh
 #
-# Everything lands in datasets/_hagrid_raw/ (gitignored) and is cached — a
-# re-run re-uses whatever is already there and only fetches what is missing.
-# build_dataset.py then converts it into datasets/hagrid_gestures/.
+# Everything lands in datasets/_hagrid_raw/ (gitignored, shared across use
+# cases) and is cached — a re-run re-uses whatever is already there and only
+# fetches what is missing. build_dataset.py then converts it into
+# datasets/detect/hagrid_gestures/.
 #
 # Two sources, selected with HAGRID_SOURCE:
 #
@@ -30,7 +31,7 @@
 # Every URL is overridable and is HEAD-checked BEFORE any large transfer starts,
 # because HaGRID re-hosts its archives between releases:
 #
-#   HAGRID_SUBSAMPLE_URL=<url> custom_dataset_usecases/hagrid_gestures/get_dataset.sh
+#   HAGRID_SUBSAMPLE_URL=<url> custom_dataset_usecases/detect/hagrid_gestures/get_dataset.sh
 #
 # Alternatives if the default ever dies:
 #   cj-mills/hagrid-sample-500k-384p   13.4 GB, 509k images, same layout
@@ -44,7 +45,7 @@ set -euo pipefail
 
 GESTURES=(call fist like palm peace)
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 RAW="$REPO_ROOT/datasets/_hagrid_raw"
 
 HAGRID_SOURCE="${HAGRID_SOURCE:-subsample}"
@@ -174,4 +175,4 @@ echo ""
 echo "Raw HaGRID ready in $RAW"
 echo ""
 echo "Next:"
-echo "  python3 custom_dataset_usecases/hagrid_gestures/build_dataset.py"
+echo "  python3 custom_dataset_usecases/detect/hagrid_gestures/build_dataset.py"

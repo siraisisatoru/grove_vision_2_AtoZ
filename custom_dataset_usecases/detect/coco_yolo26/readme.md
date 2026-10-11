@@ -11,12 +11,14 @@ of this.
 
 This use case is special in three ways:
 
-1. **No Roboflow project.** `datasets/coco_yolo26/` is assembled by hand from the
+1. **No Roboflow project.** `datasets/detect/coco_yolo26/` is assembled by hand from the
    Ultralytics coco128 release asset. `--skip-fetch` is mandatory.
-2. **No training.** `datasets/coco_yolo26/runs/train/weights/best.pt` is a *copy
+2. **No training.** `datasets/detect/coco_yolo26/runs/yolo26n/weights/best.pt` is a *copy
    of the stock `yolo26n.pt`*, standing in for the trained weights `flow.sh`
-   expects. `--skip-train` is mandatory — a training run would overwrite it with
-   a 128-image COCO fit, which is far worse than the stock weights.
+   expects (`runs/<model-key>/`, where `<model-key>` is `MODEL=yolo26n.pt` with
+   the `.pt` stripped). `--skip-train` is mandatory — a training run would
+   overwrite it with a 128-image COCO fit, which is far worse than the stock
+   weights.
 3. **The dataset is calibration data only.** Those 128 images are used solely for
    INT8 quantization calibration, never for learning.
 
@@ -36,16 +38,16 @@ unzip -q -o /tmp/coco128.zip -d /tmp
 # 2. Lay it out the way flow.sh expects. valid/ is what the converter reads for
 #    INT8 calibration; train/ is present only so the generated data.yaml is
 #    well-formed.
-D=datasets/coco_yolo26
+D=datasets/detect/coco_yolo26
 mkdir -p $D/train/images $D/train/labels $D/valid/images $D/valid/labels \
-         $D/test/images $D/runs/train/weights
+         $D/test/images $D/runs/yolo26n/weights
 cp /tmp/coco128/images/train2017/*.jpg $D/train/images/
 cp /tmp/coco128/labels/train2017/*.txt $D/train/labels/
 cp /tmp/coco128/images/train2017/*.jpg $D/valid/images/
 cp /tmp/coco128/labels/train2017/*.txt $D/valid/labels/
 
 # 3. The "trained" weights = the stock checkpoint, unmodified
-cp helper_scripts/yolo26n.pt $D/runs/train/weights/best.pt
+cp helper_scripts/yolo26n.pt $D/runs/yolo26n/weights/best.pt
 
 # 4. data.yaml with the 80 COCO names in class-index order. flow.sh parses
 #    names: [...] out of this to populate LABELS for the stream view.
@@ -54,7 +56,7 @@ from pathlib import Path
 from ultralytics import YOLO
 names = YOLO('helper_scripts/yolo26n.pt').model.names
 names = [names[i] for i in range(len(names))]
-d = Path('datasets/coco_yolo26').resolve()
+d = Path('datasets/detect/coco_yolo26').resolve()
 (d / 'data.yaml').write_text(
     f"path: {d}\n"
     f"train: {d/'train'/'images'}\n"
@@ -66,12 +68,12 @@ d = Path('datasets/coco_yolo26').resolve()
 EOF
 ```
 
-You also need `custom_dataset_usecases/coco_yolo26/.env` (gitignored, required by
+You also need `custom_dataset_usecases/detect/coco_yolo26/.env` (gitignored, required by
 `flow.sh` even though no Roboflow call is made):
 
 ```bash
 echo 'ROBOFLOW_API_KEY=unused_no_roboflow_project' \
-  > custom_dataset_usecases/coco_yolo26/.env
+  > custom_dataset_usecases/detect/coco_yolo26/.env
 ```
 
 ---
@@ -82,28 +84,28 @@ All from `helper_scripts/`. **`--skip-fetch --skip-train` are always required**
 (see above); omitting them either hits an empty Roboflow config or destroys the
 stock weights.
 
-**Convert only** (produces `datasets/coco_yolo26/convert/yolo26_int8_vela.tflite`;
+**Convert only** (produces `datasets/detect/coco_yolo26/convert/yolo26_int8_vela.tflite`;
 step 5 will report "No Grove Vision AI V2 found" if no board is attached, which is
 harmless):
 
 ```bash
-./flow.sh --coco_yolo26 --yolo26 --skip-fetch --skip-train --skip-flash
+./flow.sh --detect/coco_yolo26 --skip-fetch --skip-train --skip-flash
 ```
 
 **Flash an already-converted model and view the stream** (hold BOOT, press RESET
 when prompted):
 
 ```bash
-./flow.sh --coco_yolo26 --yolo26 --skip-fetch --skip-train --skip-convert
+./flow.sh --detect/coco_yolo26 --skip-fetch --skip-train --skip-convert
 ```
 
 **Everything (convert + flash + stream):**
 
 ```bash
-./flow.sh --coco_yolo26 --yolo26 --skip-fetch --skip-train
+./flow.sh --detect/coco_yolo26 --skip-fetch --skip-train
 ```
 
-Add `--rebuild-docker` if `grove_vision_convert_yolo26` doesn't exist yet. Note
+Add `--rebuild-docker` if `grove_vision_convert` doesn't exist yet. Note
 that the image check asks the Docker daemon directly — if Docker Desktop is still
 starting up, the check can report the image as missing when it does exist. Open
 the Docker UI, wait for the engine, and retry before rebuilding.
@@ -135,7 +137,7 @@ both scaling with `IMGSZ²`:
 `himax_vela.ini` and does not enforce the real 1100 KiB**, so an over-budget model
 compiles cleanly and then corrupts the camera framebuffer or the FreeRTOS heap on
 device. Always check `sram_memory_used` in
-`datasets/coco_yolo26/convert/yolo26_int8_summary_My_Sys_Cfg.csv` before flashing.
+`datasets/detect/coco_yolo26/convert/yolo26_int8_summary_My_Sys_Cfg.csv` before flashing.
 
 ---
 
